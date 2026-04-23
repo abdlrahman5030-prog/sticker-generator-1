@@ -1,59 +1,75 @@
 import streamlit as st
 import pandas as pd
 from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import portrait
+from reportlab.lib.units import cm
 import barcode
 from barcode.writer import ImageWriter
 import io
+import os
 from PIL import Image
 
-# إعدادات الصفحة
-st.set_page_config(page_title="مولد الاستيكرات")
-st.title("أداة توليد الاستيكرات الاحترافية")
+st.set_page_config(page_title="Sticker Pro Precision")
 
-# رفع ملف البيانات
-uploaded_file = st.file_uploader("ارفع ملف الـ CSV الخاص بك", type=["csv"])
-barcode_type = st.selectbox("نوع الكود", ["upca", "code128"])
+st.title("مولد الاستيكرات بالأبعاد الدقيقة")
+
+# الإعدادات في الشريط الجانبي
+export_format = st.sidebar.selectbox("صيغة التصدير", ["PDF", "CSV"])
+layout = st.sidebar.radio("تنسيق الطباعة", ["استيكر واحد لكل صفحة", "تجميع A4 (توفير ورق)"])
+
+uploaded_file = st.file_uploader("ارفع ملف الـ CSV", type=["csv"])
 
 if uploaded_file is not None:
     df = pd.read_csv(uploaded_file)
-    st.success("تم رفع الملف بنجاح!")
     
-    if st.button("بدء توليد الاستيكرات (PDF)"):
+    if st.button("توليد الملف النهائي"):
         output = io.BytesIO()
-        # هنا بنحدد مقاس الورقة (عرض 200، طول 300) - تقدر تغيرهم حسب مقاس الاستيكر
-        c = canvas.Canvas(output, pagesize=(200, 300))
         
+        # مقاس الاستيكر بناءً على طلبك: 4.5 سم عرض × 3.8 سم ارتفاع
+        width, height = 4.5 * cm, 3.8 * cm
+        c = canvas.Canvas(output, pagesize=(width, height))
+        
+        template_path = "template.png.png"
+
         for index, row in df.iterrows():
-            # --- منطقة التصميم (Coordinates) ---
-            # c.drawString(العرض من اليمين X, الارتفاع من تحت Y, النص)
+            # رسم الخلفية PNG
+            if os.path.exists(template_path):
+                c.drawImage(template_path, 0, 0, width=width, height=height)
             
+            # --- توزيع البيانات بناءً على إحداثيات الصور المرسلة ---
+            
+            # 1. المقاس (24M) - خط Arial كبير
             c.setFont("Helvetica-Bold", 14)
-            c.drawCentredString(100, 270, str(row.get('Size', '18M'))) # المقاس فوق
+            c.drawCentredString(width/2, 3.1 * cm, str(row.get('Size', '')))
             
-            c.setFont("Helvetica", 9)
-            c.drawString(20, 240, f"STYLE#: {row.get('Style', '')}")
-            c.drawString(20, 225, f"COLOR: {row.get('Color', '')}")
+            # 2. الباركود (3.9 سم عرض × 1 سم ارتفاع)
+            try:
+                val = str(row.get('Barcode_Value', '000000000000'))
+                upc = barcode.get('upca', val, writer=ImageWriter())
+                barcode_img = io.BytesIO()
+                upc.write(barcode_img)
+                c.drawInlineImage(Image.open(barcode_img), 0.3 * cm, 2.0 * cm, width=3.9 * cm, height=1.0 * cm)
+            except: pass
+
+            # 3. النصوص الصغيرة (STYLE, COLOR, DIM, LABEL)
+            # المسافة البادئة 0.5 سم كما في صورتك
+            c.setFont("Helvetica", 6)
+            left_margin = 0.5 * cm
             
-            # توليد الباركود
-            code_class = barcode.get_barcode_class(barcode_type)
-            val = str(row.get('Barcode_Value', '000000000000'))
-            my_barcode = code_class(val, writer=ImageWriter())
+            c.drawString(left_margin, 1.7 * cm, f"STYLE#: {row.get('Style', '')}")
+            c.drawString(left_margin, 1.4 * cm, f"COLOR: {row.get('Color', '')}")
+            c.drawString(left_margin, 1.1 * cm, str(row.get('Description', '')))
             
-            b_img = io.BytesIO()
-            my_barcode.write(b_img)
-            b_img.seek(0)
-            img = Image.open(b_img)
+            # النصوص جهة اليمين
+            right_col = 3.0 * cm
+            c.drawString(right_col, 1.7 * cm, f"DIM: {row.get('Dim', '')}")
+            c.drawString(right_col, 1.4 * cm, f"LABEL: {row.get('Label', '')}")
             
-            # مكان الباركود (العرض، الارتفاع، عرض الصورة، طول الصورة)
-            c.drawInlineImage(img, 20, 80, width=160, height=80)
+            # 4. السعر (الأسفل يمين) - مسافة 0.8 سم من اليمين و 0.45 سم من الأسفل
+            c.setFont("Helvetica-Bold", 11)
+            price_text = f"$ {row.get('Price', '0.00')}"
+            c.drawRightString(width - 0.8 * cm, 0.5 * cm, price_text)
             
-            c.setFont("Helvetica-Bold", 12)
-            c.drawString(20, 50, "RETAIL PRICE:")
-            c.setFont("Helvetica-Bold", 18)
-            c.drawString(120, 45, f"$ {row.get('Price', '0.00')}")
-            
-            c.showPage() # صفحة جديدة لكل استيكر
+            c.showPage()
             
         c.save()
-        st.download_button("تحميل الملف النهائي", data=output.getvalue(), file_name="stickers_ready.pdf")
+        st.download_button("تحميل الملف الجاهز للإليستريتور", data=output.getvalue(), file_name="final_stickers.pdf")
